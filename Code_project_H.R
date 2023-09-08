@@ -8,8 +8,14 @@ library(magrittr) # %>%
 library(lubridate) # date
 library(DescTools) # winsorize
 library(expss)
+library(readr)
 
-my_path <- r'(C:\Users\Arnaud\OneDrive\Bureau\cultural finance\Projet)'
+user <- 'Arnaud'
+if(user=='Arnaud'){
+  my_path <- r'(C:\Users\Arnaud\OneDrive\Bureau\cultural finance\Projet\Data)'
+} else if(user==''){
+  my_path <- r'()'
+}
 
 # declare useful functions
 my_wins <- function(x, lvl, vars){
@@ -39,99 +45,103 @@ data <- read_sav(file.path(my_path, 'PANDA data_2021_11_17.sav'))
 data <- my_wins(data, 0.05, c('eu_inc_ppp', 'ppl_hh')) # some crazy values to change
 data <- my_wins(data, 0.01, c('age')) # less crazy values
 
+# wws <- readr::read_csv(file.path(my_path, 
+#                                  'WVS_Cross-National_Inverted_Wave_7_csv_v5_0.csv'))
+
 # Attitude toward learning:
 #degree -> 1 to 5 scale (5=PhD or equivalent)
 # no clue what is the difference with hdegree but the last one has less nan values
+# XB2 -> I see myself as trusting
 #ALA4 -> 1 to 5 scale (5=Agree with Somebody who studies hard should be admired)
 #ALC2 -> 1 to 5 scale (5=wants to be firend with diligent student)
 # unigrade -> 1 to 100 (100=best grade)
 # patience (MS X.T1) -> 1 = a payment of 1700 this month / 2 = a payment of 1900 next month 
 # eu_inc_ppp = monthly income adjusted for difference in purchasing power (CONTROL)
 # ppl_hh = n_pers in household (CONTROL)
-educ_cols <- c('hdegree', 'degree', 'ALA4', 'ALC2', 'unigrade')
+att_learning <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2', 
+                  'ALC3', 'ALC5', 'ALC6', 'ALD1', 'ALD4')
+# reverse them for highest score = good attitude toward learning
+att_learning_to_inv <- c('ALA2', 'ALA3', 'ALC5', 'ALC6')
+hof <- c('IDV', 'PDI1', 'MAS', 'UAI') # 'PDI2'
 
+# Data preparation
+data <- data %>% 
+  mutate(wealth_hh_per_ppl = log(eu_inc_ppp/ppl_hh),
+         date = lubridate::dmy(substr(datetime, start=1, stop=11)),
+         year = lubridate::year(date),
+         is_patient = case_when(patience==1 ~ 0, T ~ 1),
+         age = log(age),
+         trust = scale(XB2),
+         female = case_when(gender==0 ~ 1, T ~ 0),
+         across(all_of(att_learning_to_inv), ~ .x*-1, .names = '{.col}'),
+         across(all_of(att_learning), ~ scale(.x), .names = '{.col}'),
+         across(all_of(hof), ~ scale(.x), .names = '{.col}')) %>% 
+  select(is_patient, wealth_hh_per_ppl, date, cntry, 
+         all_of(att_learning), hdegree, age, year, trust, female, all_of(hof))
+
+# create a score attitude toward learning
+data$n_var_atl <- apply(!is.na(data[, att_learning]), 1, sum) # n non-missing var
+data <- data[data$n_var_atl>0,]
+data$atl <-  rowSums(data[,att_learning], na.rm = T) / data$n_var_atl
 
 #######################################################################
 ## TEST 1: Link between highest diploma obtained and patience
 #######################################################################
 
-# Data preparation
-test1 <- data %>% 
-  mutate(wealth_hh_per_ppl = log(eu_inc_ppp/ppl_hh),
-         date = lubridate::dmy(substr(datetime, start=1, stop=11)),
-         year = lubridate::year(date),
-         is_patient = case_when(patience==1 ~ 0, T ~ 1),
-         age = log(age)) %>% 
-         #across(all_of(educ_cols), ~ scale(.x), .names = '{.col}')) %>% 
-  select(is_patient, wealth_hh_per_ppl, date, cntry, all_of(educ_cols), age, year)
-
 # drop nan
-colSums(is.na(test1))
-test1_col1 <- na.omit(test1)
-test1_col2 <- na.omit(test1[, c('is_patient', 'wealth_hh_per_ppl', 'date', 
-                              'cntry', 'hdegree', 'age', 'year')])
+test1 <- data
+test1 <- na.omit(test1[, c('is_patient', 'wealth_hh_per_ppl', 'date', 
+                              'cntry', 'hdegree', 'age', 'trust', 
+                           'female', 'atl')])
 
 # regression
-formula_1_col1 <- as.formula(paste(
-  'is_patient ~ 1 +', paste(educ_cols, collapse='+'), 
-  '+ wealth_hh_per_ppl + age | 0 | 0 |cntry', sep=''))
-reg_1_col1 <- felm(formula_1_col1, data=test1_col1)
-summary(reg_1_col1)
-
-formula_1_col2 <- as.formula(paste(
-  'is_patient ~ hdegree',
-  '+ wealth_hh_per_ppl + age |cntry| 0 |cntry', sep=''))
-reg_1_col2 <- felm(formula_1_col2, data=test1_col2)
-summary(reg_1_col2)
+formula_1 <- as.formula(paste(
+  'is_patient ~ atl + hdegree + wealth_hh_per_ppl + age + trust + female |cntry| 0 |cntry', 
+  sep=''))
+reg_1 <- felm(formula_1, data=test1)
+summary(reg_1)
 
 # Arnaud: I am not sure whether, we should consider only 'degree' or other variables
 # which have many nan values. We could combine them also
 # We see in summary(reg_1_col2), that degree is positively linked to patience
 # the effect is robust to country fixed effects which include time-invariants country
-# charcateristics (some aspects of culture should therefore be captured)
+# characteristics (some aspects of culture should therefore be captured)
 
 #######################################################################
 ## TEST 2: Link between highest diploma obtained and patience per Country
 #######################################################################
 
-# Data preparation
-test2 <- data %>% 
-  mutate(wealth_hh_per_ppl = log(eu_inc_ppp/ppl_hh),
-         date = lubridate::dmy(substr(datetime, start=1, stop=11)),
-         is_patient = case_when(patience==1 ~ 0, T ~ 1),
-         age = log(age)) %>% 
-         #across(all_of(educ_cols), ~ standardize(.x), .names = '{.col}')) %>% 
-  select(is_patient, wealth_hh_per_ppl, date, cntry, hdegree, age, bachelor)
-
 # barplot
-test2_plot <- test2 %>% group_by(cntry) %>% 
+test2_plot <- data %>% group_by(cntry) %>% 
   mutate(
     mean_is_patient = mean(is_patient, na.rm=T),
-    mean_bachelor = mean(bachelor, na.rm=T)) %>% ungroup() %>% 
-  select(cntry, mean_bachelor, mean_is_patient) %>% unique() %>% 
+    mean_atl = mean(atl, na.rm=T)) %>% ungroup() %>% 
+  select(cntry, mean_atl, mean_is_patient) %>% unique() %>% 
   arrange(cntry)
-barplot(cbind(mean_is_patient, mean_bachelor) ~ cntry, data=test2_plot, 
+barplot(cbind(mean_is_patient, mean_atl) ~ cntry, data=test2_plot, 
         beside=T, names.arg=c('Germany', 'Estonia', 'Taiwan', 'China', 
                               'Vietnam', 'Japan', 'Hong Kong'),
         xlab = '', ylab = 'Proportion', col=c('dark blue', 'light blue'), 
         ylim=c(0,1))
 legend('top', col=c('dark blue', 'light blue'), 
-       c('Is_patient', 'Has_bachelor'), lwd=2, inset = c(0, -0.02), ncol = 2,
-       box.lty = 0)
+       c('Patience score', 'Atitude Toward learning score'), lwd=2, inset = c(0, -0.02), 
+       ncol = 2, box.lty = 0)
 
 # scatterplot
-scatter.smooth(test2_plot$mean_bachelor, test2_plot$mean_is_patient, span = 1,
-               degree = 1, xlab = 'Proportion of people having a bachelor degree',
-               ylab = 'Proportion of people choosing to wait')
+scatter.smooth(test2_plot$mean_atl, test2_plot$mean_is_patient, span = 1,
+               degree = 1, xlab = 'Atitude Toward learning score',
+               ylab = 'Patience score')
 
 # drop nan
+test2 <- data
 colSums(is.na(test2))
 test2 <- na.omit(test2[c('is_patient', 'wealth_hh_per_ppl', 'date', 'cntry', 
-                         'hdegree', 'age')])
+                         'hdegree', 'age', 'female', 'trust', 'atl')])
 
 # run regression for each country
 countries <- sort(as.numeric(unique(test2$cntry)))
-formula_2 <- as.formula('is_patient ~ 1 + hdegree + wealth_hh_per_ppl + age')
+formula_2 <- as.formula(
+  'is_patient ~ 1 + atl + hdegree + wealth_hh_per_ppl + age + trust + female')
 results_2 <- list()
 
 for(i in seq(1, length(countries))){
@@ -151,33 +161,28 @@ for(i in seq(1, length(countries))){
 ## TEST 3: Is the link between education and patience stronger for some countries?
 #######################################################################
 
-# Data preparation
-test3 <- data %>% 
-  mutate(wealth_hh_per_ppl = log(eu_inc_ppp/ppl_hh),
-         date = lubridate::dmy(substr(datetime, start=1, stop=11)),
-         year = lubridate::year(date),
-         is_patient = case_when(patience==1 ~ 0, T ~ 1),
-         age = log(age)) %>% 
-         #across(all_of(educ_cols), ~ standardize(.x), .names = '{.col}')) %>% 
-  select(is_patient, wealth_hh_per_ppl, date, cntry, hdegree, age, year)
-
 # drop nan
+test3 <- data
 colSums(is.na(test3))
-test3 <- na.omit(test3)
+test3 <- na.omit(test3[, c('is_patient', 'wealth_hh_per_ppl', 'date', 
+                           'cntry', 'hdegree', 'age', 'trust', 
+                           'female', 'atl')])
 
 # create interactions terms within some countries
 test3 <- test3 %>% mutate(
-  hdegree_estonia = hdegree * case_when(cntry == 2 ~ 1, T ~ 0),
-  hdegree_taiwan = hdegree * case_when(cntry == 3 ~ 1, T ~ 0),
-  hdegree_china = hdegree * case_when(cntry == 4 ~ 1, T ~ 0),
-  hdegree_vietnam = hdegree * case_when(cntry == 5 ~ 1, T ~ 0),
-  hdegree_japan = hdegree * case_when(cntry == 6 ~ 1, T ~ 0),
-  hdegree_hk = hdegree * case_when(cntry == 7 ~ 1, T ~ 0))
-expla_var <- sort(colnames(test3 %>% select(-is_patient, -date, -cntry, -year)))
+  atl_estonia = atl * case_when(cntry == 2 ~ 1, T ~ 0),
+  atl_taiwan = atl * case_when(cntry == 3 ~ 1, T ~ 0),
+  atl_china = atl * case_when(cntry == 4 ~ 1, T ~ 0),
+  atl_vietnam = atl * case_when(cntry == 5 ~ 1, T ~ 0),
+  atl_japan = atl * case_when(cntry == 6 ~ 1, T ~ 0))
+  #atl_hk = atl * case_when(cntry == 7 ~ 1, T ~ 0))
+expla_var <- c('atl', 'atl_estonia', 'atl_taiwan', 'atl_china', 'atl_vietnam', 
+               'atl_japan', 'hdegree', 'wealth_hh_per_ppl', 'age', 'trust', 
+               'female')
 
 # regression
 # cant use fixed effects as degree_xxx is fixed for some countries
-formula_3 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
+formula_3 <- as.formula(paste('is_patient ~ 1 +', paste(expla_var, collapse='+'), 
                               sep=''))
 reg_3 <- lm(formula_3, data=test3)
 summary(reg_3)
@@ -186,39 +191,25 @@ summary(reg_3)
 ## TEST 4: Can the link between education and patience be explained by cultural differences?
 #######################################################################
 
-# Data preparation
-test4 <- data %>% 
-  mutate(wealth_hh_per_ppl = log(eu_inc_ppp/ppl_hh),
-         date = lubridate::dmy(substr(datetime, start=1, stop=11)),
-         year = lubridate::year(date),
-         is_patient = case_when(patience==1 ~ 0, T ~ 1),
-         age = log(age)) %>% 
-  #across(all_of(educ_cols), ~ standardize(.x), .names = '{.col}')) %>% 
-  select(is_patient, wealth_hh_per_ppl, date, cntry, degree, age, year)
+# get average hofstedte values per country
+test4 <- data %>% group_by(cntry) %>% 
+  mutate(across(all_of(hof), ~mean(.x, na.rm=T), .names='{.col}')) %>% 
+  ungroup()
 
 # drop nan
-colSums(is.na(test3))
-test3 <- na.omit(test3)
+colSums(is.na(test4))
+test4 <- na.omit(test4[, c('is_patient', 'wealth_hh_per_ppl', 'date', 
+                          'cntry', 'hdegree', 'age', 'trust', 
+                          'female', 'atl', hof)])
 
-# create interactions terms within some countries
-test3 <- test3 %>% mutate(
-  degree_estonia = degree * case_when(cntry == 2 ~ 1, T ~ 0),
-  degree_taiwan = degree * case_when(cntry == 3 ~ 1, T ~ 0),
-  degree_china = degree * case_when(cntry == 4 ~ 1, T ~ 0),
-  degree_vietnam = degree * case_when(cntry == 5 ~ 1, T ~ 0),
-  degree_japan = degree * case_when(cntry == 6 ~ 1, T ~ 0),
-  degree_hk = degree * case_when(cntry == 7 ~ 1, T ~ 0))
-expla_var <- sort(colnames(test3 %>% select(-is_patient, -date, -cntry, -year)))
+expla_var <- c('atl', 'hdegree', 'wealth_hh_per_ppl', 'age', 'trust', 
+               'female', hof)
 
 # regression
-# formula_3 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
-#   '|date + cntry| 0 |date + cntry', sep=''))
-# reg_3 <- felm(formula_3, data=test3)
-# summary(reg_3)
-formula_3 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
+formula_4 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
                               sep=''))
-reg_3 <- lm(formula_3, data=test3)
-summary(reg_3)
+reg_4 <- lm(formula_4, data=test4)
+summary(reg_4)
 
 
 

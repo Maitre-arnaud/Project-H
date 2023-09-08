@@ -1,6 +1,11 @@
 H: Learning attitudes and patience – cultural differences
 	• Is there a relation between attitudes towards learning (several items on that in PANDA) and patience (time preference)?
+		-> regression of patience on ATL
 
 	• Does this relation hold in every country?
+		-> regression of patience on ATL for each country
 
 	• Is it stronger in some countries? And could that difference be caused by cultural differences?
+		-> regression of patience on ATL using interactions terms with each country
+		-> regression of patience on ATL using interactions terms with each country
+
