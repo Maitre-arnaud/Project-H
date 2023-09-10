@@ -9,6 +9,7 @@ library(lubridate) # date
 library(DescTools) # winsorize
 library(expss)
 library(readr)
+library(lme4)
 
 user <- 'Arnaud'
 if(user=='Arnaud'){
@@ -16,6 +17,10 @@ if(user=='Arnaud'){
 } else if(user==''){
   my_path <- r'()'
 }
+
+# general params
+d <- 2
+m <- 1
 
 # declare useful functions
 my_wins <- function(x, lvl, vars){
@@ -39,11 +44,40 @@ scale <- function(x){
   return(y)
 }
 
+put_stars <- function(coef, se, scale=1, decimal=2){
+  
+  if(is.na(coef)==T){
+    x <- ''
+  } else{
+    tstat <- abs(coef / se)
+    stars <- 0
+    
+    if(tstat >= 2.575){
+      stars <- 3
+    } else if(tstat >= 1.96){
+      stars <- 2
+    } else if(tstat >= 1.645){
+      stars <- 1
+    }
+    
+    coef <- format(round(scale*coef, decimal), scientific=F)
+    
+    if(stars>0){
+      x <- paste('$', coef, '^{', strrep('*', stars), '}$', sep='') 
+    } else{
+      x <- paste('$', coef, '$', sep='')
+    } 
+  }
+  return(x)
+}
+
 # Data Preparation --------------------------------------------------------
 # read and winsorize
 data <- read_sav(file.path(my_path, 'PANDA data_2021_11_17.sav'))
+#intra <- read_sav(file.path(my_path, '54-countries-6792-published-INTRA-data.sav'))
 data <- my_wins(data, 0.05, c('eu_inc_ppp', 'ppl_hh')) # some crazy values to change
 data <- my_wins(data, 0.01, c('age')) # less crazy values
+data <- data[data$cntry==data$nationality,]
 
 # wws <- readr::read_csv(file.path(my_path, 
 #                                  'WVS_Cross-National_Inverted_Wave_7_csv_v5_0.csv'))
@@ -77,12 +111,16 @@ data <- data %>%
          across(all_of(att_learning), ~ scale(.x), .names = '{.col}'),
          across(all_of(hof), ~ scale(.x), .names = '{.col}')) %>% 
   select(is_patient, wealth_hh_per_ppl, date, cntry, 
-         all_of(att_learning), hdegree, age, year, trust, female, all_of(hof))
+         all_of(att_learning), hdegree, age, year, trust, female, 
+         all_of(hof), EU_cntry, Asia_cntry)
 
 # create a score attitude toward learning
 data$n_var_atl <- apply(!is.na(data[, att_learning]), 1, sum) # n non-missing var
 data <- data[data$n_var_atl>0,]
 data$atl <-  rowSums(data[,att_learning], na.rm = T) / data$n_var_atl
+
+# plot data points
+plot(data$is_patient, data$atl)
 
 #######################################################################
 ## TEST 1: Link between highest diploma obtained and patience
@@ -94,16 +132,46 @@ test1 <- na.omit(test1[, c('is_patient', 'wealth_hh_per_ppl', 'date',
                               'cntry', 'hdegree', 'age', 'trust', 
                            'female', 'atl')])
 
-# regression
+#regression (panel regression)
+formulaff_1 <- as.formula(
+  'is_patient ~ atl + hdegree + wealth_hh_per_ppl + age + trust + female |cntry| 0 |cntry',
+  )
+regff_1 <- felm(formulaff_1, data=test1, exactDOF = T, cmethod='reghdfe')
+summary(regff_1)
+
+# output in nice table
+res <- summary(regff_1)$coefficients
+
+# results -> nice table
+coef_str <- c()
+clean_var <- c('ATL_{i}', 'Degree_{i}', 'Wealth_{i}', 'Age_{i}', 'Trust_{i}', 
+               'IsFemale_{i}')
+
+for(i in seq(1, length(clean_var))){
+  coef_str[i] <- paste('\\multirow{2}{*}{$', clean_var[i], '$} & ', 
+                       put_stars(res[i,1], res[i,2], m, d), 
+                       '\\\\ \n & $(', format(round(res[i,3],d), scientific=F) ,
+                       ')$\\\\[3pt]\n', sep='')
+}
+cat(coef_str)
+
+
+#regression multilevel
+# with random intercept for each group (=cntry)
+xs <- c('atl', 'hdegree', 'wealth_hh_per_ppl', 'age', 'trust', 'female')
+formulaml_1 <- as.formula(paste(
+  'is_patient ~ ', paste(xs, collapse = '+'), ' + (1 |cntry)', sep=''))
+regml_1 <- lmer(formulaml_1, data = test1)
+summary(regml_1)
+
+#regression basic ols
+xs <- c('atl', 'hdegree', 'wealth_hh_per_ppl', 'age', 'trust', 'female')
 formula_1 <- as.formula(paste(
-  'is_patient ~ atl + hdegree + wealth_hh_per_ppl + age + trust + female |cntry| 0 |cntry', 
-  sep=''))
-reg_1 <- felm(formula_1, data=test1)
+  'is_patient ~ 1+', paste(xs, collapse = '+'), sep=''))
+reg_1 <- lm(formula_1, data = test1)
 summary(reg_1)
 
-# Arnaud: I am not sure whether, we should consider only 'degree' or other variables
-# which have many nan values. We could combine them also
-# We see in summary(reg_1_col2), that degree is positively linked to patience
+# We see in summary(regff_1), that atl is positively linked to patience
 # the effect is robust to country fixed effects which include time-invariants country
 # characteristics (some aspects of culture should therefore be captured)
 
@@ -152,10 +220,22 @@ for(i in seq(1, length(countries))){
   results_2[[i]] <- coef_2
 }
 
-# Arnaud: Within a country, degree is not linked to patience
+# results -> nice table
+coef_str <- c()
+clean_var <- c('ATL_{i}', 'Degree_{i}', 'Wealth_{i}', 'Age_{i}', 'Trust_{i}', 
+               'IsFemale_{i}')
+
+for(i in seq(1, length(clean_var))){
+  coef_str[i] <- paste('\\multirow{2}{*}{$', clean_var[i], '$} & ', 
+                       put_stars(res[i,1], res[i,2], m, d), 
+                       '\\\\ \n & $(', format(round(res[i,3],d), scientific=F) ,
+                       ')$\\\\[3pt]\n', sep='')
+}
+cat(coef_str)
+
+# Arnaud: Within countries, atl is not linked to patience
 # Differences in patience seems to be linked with country cultural difference
 # and not so much by personal traits
-# maybe hdegree proxies some cultural traits that are predicitve of patience
 
 #######################################################################
 ## TEST 3: Is the link between education and patience stronger for some countries?
@@ -188,27 +268,32 @@ reg_3 <- lm(formula_3, data=test3)
 summary(reg_3)
 
 #######################################################################
-## TEST 4: Can the link between education and patience be explained by cultural differences?
+## TEST 4: Is the link between education and patience driven by cultural differences?
 #######################################################################
 
 # get average hofstedte values per country
-test4 <- data %>% group_by(cntry) %>% 
-  mutate(across(all_of(hof), ~mean(.x, na.rm=T), .names='{.col}')) %>% 
-  ungroup()
+# test4 <- data %>% group_by(cntry) %>% 
+#   mutate(across(all_of(hof), ~mean(.x, na.rm=T), .names='{.col}')) %>% 
+#   ungroup()
 
 # drop nan
+test4 <- data# %>% filter(cntry!=7) %>% filter(cntry!=2)
 colSums(is.na(test4))
 test4 <- na.omit(test4[, c('is_patient', 'wealth_hh_per_ppl', 'date', 
-                          'cntry', 'hdegree', 'age', 'trust', 
+                          'cntry', 'age', 'trust', 
                           'female', 'atl', hof)])
 
-expla_var <- c('atl', 'hdegree', 'wealth_hh_per_ppl', 'age', 'trust', 
-               'female', hof)
+expla_var <- c('atl', 'wealth_hh_per_ppl', 'age', 'trust', 'female', hof)
 
 # regression
-formula_4 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
-                              sep=''))
-reg_4 <- lm(formula_4, data=test4)
+# formula_4 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'), 
+#                               sep=''))
+# reg_4 <- lm(formula_4, data=test4)
+# summary(reg_4)
+
+formula_4 <- as.formula(paste('is_patient ~', paste(expla_var, collapse='+'),
+                              '| cntry | 0 | 0', sep=''))
+reg_4 <- felm(formula_4, data=test4, exactDOF = T, cmethod='reghdfe')
 summary(reg_4)
 
 
