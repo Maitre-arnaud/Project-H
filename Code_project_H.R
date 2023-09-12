@@ -13,7 +13,7 @@ library(lme4)
 library(openxlsx)
 library(tidyr) # pivot wider
 
-user <- 'USB'
+user <- 'Arnaud'
 if(user=='Arnaud'){
   my_path <- r'(C:\Users\Arnaud\OneDrive\Bureau\cultural finance\Projet\Data)'
 } else if(user=='USB'){
@@ -79,16 +79,12 @@ put_stars <- function(coef, se, scale=1, decimal=2){
 data <- read.xlsx(xlsxFile=file.path(
   my_path, 'PANDA-Excel-version-with-documentation.xlsx'), sheet='data')
 data <- my_wins(data, 0.05, c('eu_ppp_income')) # some crazy values to change
-data <- data[data$base_pack_quality>0,] # drop bad quality answers (NA stays)
-data <- data[data$tech_pack_quality>0,]
+data <- data[data$base_pack_quality!=0,] # drop bad quality answers (NA stays)
+data <- data[data$tech_pack_quality!=0,]
+#data <- data[data$residence_local==1,]
 
 # Attitude toward learning:
-#degree -> 1 to 5 scale (5=PhD or equivalent)
-# no clue what is the difference with hdegree but the last one has less nan values
 # XB2 -> I see myself as trusting
-#ALA4 -> 1 to 5 scale (5=Agree with Somebody who studies hard should be admired)
-#ALC2 -> 1 to 5 scale (5=wants to be friend with diligent student)
-# unigrade -> 1 to 100 (100=best grade)
 # patience (MS X.T1) -> 1 = a payment of 1700 this month / 2 = a payment of 1900 next month 
 # eu_ppp_income = monthly income adjusted for difference in purchasing power
 atl_all <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2', 
@@ -103,22 +99,34 @@ hof <- c('IDV', 'PDI', 'MAS', 'UAI')
 dupl_cols <- colnames(data)[which(duplicated(names(data)))]
 data <- data[ , -which(names(data) %in% dupl_cols)]
 
+# convert grades high school
+data$ID <- 1:nrow(data)
+grades <- data %>% group_by(country_code) %>% mutate(
+  new_grade = scale(as.numeric(grade) * case_when(eu_country==1 ~ -1, T ~ 1))
+) %>% ungroup() %>% select(new_grade, ID)
+
 # Data preparation
-data <- data %>% 
+data <- data %>% left_join(grades, by=c('ID')) %>% 
   mutate(
     date = as.Date(datetime, origin = "1899-12-30"),
     year = lubridate::year(date),
     wealth = log(eu_ppp_income),
+    crt = scale(correct_answers),
          family_size = 1 + as.numeric(married) + as.numeric(children),
          is_patient = case_when(XT1==2 ~ 1, T ~ 0), # 2 = choose to wait
          age = log(as.numeric(age)),
          trust = scale(XB2),
+    new_unigrade = scale(unigrade),
          across(all_of(atl_to_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
          across(all_of(atl_all), ~ scale(.x), .names = '{.col}'),
-         across(all_of(hof), ~ scale(.x), .names = '{.col}')) %>% 
+         across(all_of(hof), ~ scale(.x), .names = '{.col}'),
+    education = scale(case_when(hdegree=='PhD' ~ 5, hdegree=='Master' ~ 4, 
+                          hdegree=='Bachelor' ~ 3, hdegree=='Others' ~ 2, # most of others are currently at uni
+                          hdegree=='High school' ~ 1, T ~ 0))) %>% 
   select(is_patient, family_size, country_code, wealth,
-         all_of(atl_all), uni_degree, age, trust, female, 
-         all_of(hof), eu_country, Asia, nationality, year)
+         all_of(atl_all), uni_degree, age, trust, female, education, crt,
+         all_of(hof), eu_country, Asia, nationality, year, master, bachelor, 
+         new_unigrade, new_grade)
 
 # create a score attitude toward learning
 data$n_var_atl_all <- apply(!is.na(data[, atl_all]), 1, sum) # n non-missing var
@@ -129,6 +137,10 @@ data$atl_all <-  rowSums(data[,atl_all], na.rm = T) / data$n_var_atl_all
 data$atl_intra <-  rowSums(data[,atl_intra], na.rm = T) / data$n_var_atl_intra
 data$atl_extra <-  rowSums(data[,atl_extra], na.rm = T) / data$n_var_atl_extra
 
+# create ATL based on grades
+data$n_var_grades <- apply(!is.na(data[, c('new_grade', 'new_unigrade')]), 1, sum)
+data$atl_grade <-  rowSums(data[,c('new_grade', 'new_unigrade')], na.rm = T) / data$n_var_grades
+
 # create de-meaned atl variables
 atls <- c('atl_all', 'atl_intra', 'atl_extra')
 data <- data %>% group_by(country_code) %>% 
@@ -138,6 +150,10 @@ data <- data %>% group_by(country_code) %>%
     datl_all = atl_all - mean_atl_all,
     datl_intra = atl_intra - mean_atl_intra,
     datl_extra = atl_extra - mean_atl_extra)
+
+# patience 2
+data$n_var_pat2 <- apply(!is.na(data[, c('is_patient', 'crt')]), 1, sum)
+data$is_patient2 <- rowSums(data[,c('is_patient', 'crt')], na.rm = T) / data$n_var_pat2
 
 # process IMF data
 # gdp <- read.xlsx(xlsxFile=file.path(my_path, 'GDP.xlsx'), startRow=7)
@@ -179,13 +195,14 @@ data <- data %>% group_by(country_code) %>%
 #######################################################################
 
 # params
-y <- 'datl_intra'
+y <- 'atl_all'
+x <- 'is_patient'
 
 # drop nan
 cor(data %>% select(atl_extra, atl_intra, atl_all), use='complete.obs')
 test1 <- data
 colSums(is.na(test1))
-test1 <- na.omit(test1[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
+test1 <- na.omit(test1[, c(x, 'wealth', 'country_code', 'education', 
                            'age', 'trust', 'female', y, 'family_size')])
 xs <- colnames(test1 %>% select(-country_code, -y))
 
@@ -212,7 +229,7 @@ summary(reg_1)
 # results -> nice table
 res <- summary(reg_1)$coefficients
 coef_str <- c()
-clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'HasUniDegree_{i}', 
+clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Education_{i}', 
                'Age_{i}', 'Trust_{i}', 'IsFemale_{i}', 'FamilySize_{i}')
 
 for(i in seq(1, length(clean_var))){
@@ -232,26 +249,47 @@ cat(coef_str)
 #######################################################################
 
 # params
-y <- 'datl_intra'
+y <- 'atl_all'
+x <- 'is_patient'
 
-# barplot
+# barplot country
 test2_plot <- data %>% group_by(country_code) %>% 
   mutate(
-    mean_is_patient = mean(is_patient, na.rm=T),
+    mean_is_patient = mean(get(x), na.rm=T),
     mean_atl = mean(get(y), na.rm=T),
     mean_HasUniDegree = mean(uni_degree, na.rm=T)) %>% 
   ungroup() %>% 
   select(country_code, mean_atl, mean_is_patient, mean_HasUniDegree) %>% 
   unique() %>% 
   arrange(country_code)
-barplot(cbind(mean_is_patient, mean_atl) ~ country_code, data=test2_plot, 
+barplot(cbind(mean_is_patient, mean_atl, mean_HasUniDegree) ~ country_code, 
+        data=test2_plot, 
         beside=T, names.arg=c('Estonia', 'Taiwan', 'China', 'Vietnam', 
                               'Germany', 'Hong Kong', 'Japan'),
-        xlab = '', ylab = 'Proportion', col=c('dark blue', 'light blue'), 
+        xlab = '', ylab = 'Score', col=c('dark blue', 'light blue', 'dark green'), 
         ylim=c(0,1))
-legend('top', col=c('dark blue', 'light blue'), 
-       c('Patience score', 'Atitude Toward learning score'), lwd=2, inset = c(0, -0.02), 
+legend('top', col=c('dark blue', 'light blue', 'dark green'), 
+       c('Patience', 'ATL', 'Has Uni Degree'), lwd=2, inset = c(0, -0.02), 
        ncol = 2, box.lty = 0)
+
+# barplot continent
+test2_plot_cont <- data %>% group_by(eu_country) %>% 
+  mutate(
+    mean_is_patient = mean(get(x), na.rm=T),
+    mean_atl = mean(get(y), na.rm=T),
+    mean_HasUniDegree = mean(uni_degree, na.rm=T)) %>% 
+  ungroup() %>% 
+  select(eu_country, mean_atl, mean_is_patient, mean_HasUniDegree) %>% 
+  unique() %>% 
+  arrange(eu_country)
+barplot(cbind(mean_is_patient, mean_atl, mean_HasUniDegree) ~ eu_country, 
+        data=test2_plot_cont, 
+        beside=T, names.arg=c('Asia', 'Europe'),
+        xlab = '', ylab = 'Score', col=c('dark blue', 'light blue', 'dark green'), 
+        ylim=c(0,1))
+legend('top', col=c('dark blue', 'light blue', 'dark green'), 
+       c('Patience', 'ATL', 'Has Uni Degree'), lwd=2, inset = c(0, -0.02), 
+       ncol = 3, box.lty = 0)
 
 # scatterplot
 scatter.smooth(test2_plot$mean_atl, test2_plot$mean_is_patient, span = 1,
@@ -261,7 +299,7 @@ scatter.smooth(test2_plot$mean_atl, test2_plot$mean_is_patient, span = 1,
 # drop nan
 test2 <- data
 colSums(is.na(test2))
-test2 <- na.omit(test2[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
+test2 <- na.omit(test2[, c(x, 'wealth', 'country_code', 'education', 
                            'age', 'trust', 'female', y, 'family_size', 'Asia')])
 xs <- colnames(test2 %>% select(-country_code, -y, -Asia))
 
@@ -288,7 +326,7 @@ for(i in seq(1, length(countries))){
 
 # results -> nice table
 coef_str <- c()
-clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'HasUniDegree_{i}', 
+clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Education_{i}', 
                'Age_{i}', 'Trust_{i}', 'IsFemale_{i}', 'FamilySize_{i}')
 
 for(i in seq(1, length(clean_var))){
@@ -298,7 +336,6 @@ for(i in seq(1, length(clean_var))){
     reg <- results_2[[mi]]
     ci <- paste(ci, ' & ', put_stars(reg[i,1], reg[i,2], m, d), sep='')
     si <- paste(si, ' & $(' , format(round(reg[i,3],d), scientific=F), ')$', sep='')
-
   }
   coef_str[i] <- paste(ci, '\\\\ \n ', si, '\\\\[3pt]\n', sep='')
 }
@@ -343,40 +380,77 @@ cat(paste(paste0('$', n_obs, '$'), collapse = ' & '))
 ## TEST 4: Is the link between education and patience driven by cultural differences?
 #######################################################################
 
+data %>% group_by(Asia) %>% summarise(wealth = mean(wealth, na.rm=T), 
+                                      age = mean(age, na.rm=T), 
+                                      educ = mean(education, na.rm=T), 
+                                      crt = mean(crt, na.rm=T), 
+                                      patience = mean(is_patient, na.rm=T),
+                                      extra = mean(atl_extra, na.rm=T),
+                                      intra = mean(atl_intra, na.rm=T),
+                                      all = mean(atl_all, na.rm=T))
+
 # Params
-y <- 'datl_intra'
+y <- 'atl_grade'
+x <- 'is_patient'
+
+# create interaction
+test4 <- data %>% mutate(
+  inter_patience_asia = is_patient * Asia,
+  inter_education_patience = is_patient * education)
+  #inter_age_patience = is_patient * age,
+  #inter_wealth_patience = is_patient * wealth)
 
 # drop nan
-test4 <- data
 colSums(is.na(test4))
-test4 <- na.omit(test4[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
+test4 <- na.omit(test4[, c(x, 'wealth', 'country_code', 'education', 
                            'age', 'trust', 'female', y, 'family_size', 
-                           'Asia', hof)])
-test4 <- test4 %>% mutate(
-  inter_patience_asia = is_patient * Asia,
-  inter_hasUniDegree_patience = is_patient * uni_degree)
+                           'Asia', hof, 'inter_patience_asia', 
+                           'inter_education_patience')])#, 'inter_age_patience', 'inter_wealth_patience')])
 xs <- colnames(test4 %>% select(-country_code, -y))
 
-# regression
-formula_4 <- as.formula(paste(y, ' ~', paste(xs, collapse='+'), sep=''))
-reg_4 <- lm(formula_4, data=test4)
-summary(reg_4)
+# run 2 regressions
+regs <- seq(1,2)
+results_4 <- list()
+n_obs <- c()
+
+for(i in seq(1, length(regs))){
+  
+  if(i==1){
+    new_xs <- xs[! xs %in% c('inter_education_patience')]
+  }else{
+    new_xs <- xs
+  }
+  formula_4 <- as.formula(paste(y, ' ~', paste(new_xs, collapse='+'), sep=''))
+  reg_4 <- lm(formula_4, data=test4)
+  coef_4 <- summary(reg_4)$coefficients
+  results_4[[i]] <- coef_4
+  n_obs[i] <- dim(test4)[1]
+}
 
 # results -> nice table
-res <- summary(reg_4)$coefficients
 coef_str <- c()
-clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'HasUniDegree_{i}', 
+clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Education_{i}', 
                'Age_{i}', 'Trust_{i}', 'IsFemale_{i}', 'FamilySize_{i}', 
                'Asia_{i}', 'IDV_{i}', 'PDI_{i}', 'MAS_{i}', 'UAI_{i}', 
-               'IsPatient*Asia_{i}', 'IsPatient*HasDegree_{i}')
+               'IsPatient*Asia_{i}', 'IsPatient*Education_{i}')
 
 for(i in seq(1, length(clean_var))){
-  coef_str[i] <- paste('\\multirow{2}{*}{$', clean_var[i], '$} & ', 
-                       put_stars(res[i,1], res[i,2], m, d), 
-                       '\\\\ \n & $(', format(round(res[i,3],d), scientific=F) ,
-                       ')$\\\\[3pt]\n', sep='')
+  ci <- paste('\\multirow{2}{*}{$', clean_var[i], '$}', sep='')
+  si <- ''
+  for(mi in seq(1, length(regs))){
+    if(mi==1 & i==length(clean_var)){
+      ci <- paste(ci, ' & ', sep='')
+      si <- paste(si, ' & ', sep='')
+    } else{
+      reg <- results_4[[mi]]
+      ci <- paste(ci, ' & ', put_stars(reg[i,1], reg[i,2], m, d), sep='')
+      si <- paste(si, ' & $(' , format(round(reg[i,3],d), scientific=F), ')$', sep='')
+    }
+  }
+  coef_str[i] <- paste(ci, '\\\\ \n ', si, '\\\\[3pt]\n', sep='')
 }
 cat(coef_str)
+cat(paste(paste0('$', n_obs, '$'), collapse = ' & '))
 
 
 
