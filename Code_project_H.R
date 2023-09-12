@@ -13,11 +13,11 @@ library(lme4)
 library(openxlsx)
 library(tidyr) # pivot wider
 
-user <- 'Arnaud'
+user <- 'USB'
 if(user=='Arnaud'){
   my_path <- r'(C:\Users\Arnaud\OneDrive\Bureau\cultural finance\Projet\Data)'
-} else if(user==''){
-  my_path <- r'()'
+} else if(user=='USB'){
+  my_path <- r'(E:\cultural finance\Projet\Data)'
 }
 
 # general params
@@ -91,10 +91,12 @@ data <- data[data$tech_pack_quality>0,]
 # unigrade -> 1 to 100 (100=best grade)
 # patience (MS X.T1) -> 1 = a payment of 1700 this month / 2 = a payment of 1900 next month 
 # eu_ppp_income = monthly income adjusted for difference in purchasing power
-att_learning <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2', 
+atl_all <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2', 
                   'ALC3', 'ALC5', 'ALC6', 'ALD1', 'ALD4')
+atl_intra <- c('ALA1', 'ALA4', 'ALB1', 'ALB2', 'ALD1', 'ALD4')
+atl_extra <- c('ALC2', 'ALC3', 'ALC5', 'ALC6')
 # reverse them for highest score = good attitude toward learning
-att_learning_to_inv <- c('ALA2', 'ALA3', 'ALC5', 'ALC6')
+atl_to_inv <- c('ALA2', 'ALA3', 'ALC5', 'ALC6')
 hof <- c('IDV', 'PDI', 'MAS', 'UAI')
 
 # some columns names are duplicated drop them -> mess with dplyr
@@ -111,81 +113,99 @@ data <- data %>%
          is_patient = case_when(XT1==2 ~ 1, T ~ 0), # 2 = choose to wait
          age = log(as.numeric(age)),
          trust = scale(XB2),
-         across(all_of(att_learning_to_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
-         across(all_of(att_learning), ~ scale(.x), .names = '{.col}'),
+         across(all_of(atl_to_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
+         across(all_of(atl_all), ~ scale(.x), .names = '{.col}'),
          across(all_of(hof), ~ scale(.x), .names = '{.col}')) %>% 
   select(is_patient, family_size, country_code, wealth,
-         all_of(att_learning), uni_degree, age, trust, female, 
+         all_of(atl_all), uni_degree, age, trust, female, 
          all_of(hof), eu_country, Asia, nationality, year)
 
 # create a score attitude toward learning
-data$n_var_atl <- apply(!is.na(data[, att_learning]), 1, sum) # n non-missing var
-data <- data[data$n_var_atl>0,]
-data$atl <-  rowSums(data[,att_learning], na.rm = T) / data$n_var_atl
+data$n_var_atl_all <- apply(!is.na(data[, atl_all]), 1, sum) # n non-missing var
+data$n_var_atl_intra <- apply(!is.na(data[, atl_intra]), 1, sum)
+data$n_var_atl_extra <- apply(!is.na(data[, atl_extra]), 1, sum)
+data <- data[data$n_var_atl_all>0,]
+data$atl_all <-  rowSums(data[,atl_all], na.rm = T) / data$n_var_atl_all
+data$atl_intra <-  rowSums(data[,atl_intra], na.rm = T) / data$n_var_atl_intra
+data$atl_extra <-  rowSums(data[,atl_extra], na.rm = T) / data$n_var_atl_extra
+
+# create de-meaned atl variables
+atls <- c('atl_all', 'atl_intra', 'atl_extra')
+data <- data %>% group_by(country_code) %>% 
+  mutate(across(all_of(atls), ~mean(.x, na.rm=T), .names = 'mean_{.col}')) %>% 
+  ungroup() %>% 
+  mutate(
+    datl_all = atl_all - mean_atl_all,
+    datl_intra = atl_intra - mean_atl_intra,
+    datl_extra = atl_extra - mean_atl_extra)
 
 # process IMF data
-gdp <- read.xlsx(xlsxFile=file.path(my_path, 'GDP.xlsx'), startRow=7)
-gdp$country_code <- 0
-gdp$country_code[gdp$Country=='China, P.R.: Mainland'] <- 4
-gdp$country_code[gdp$Country=='China, P.R.: Hong Kong'] <- 9
-gdp$country_code[gdp$Country=='Estonia, Rep. of'] <- 1
-gdp$country_code[gdp$Country=='Germany'] <- 8
-gdp$country_code[gdp$Country=='Japan'] <- 10
-gdp$country_code[gdp$Country=='Vietnam'] <- 4
-gdp <- gdp[gdp$country_code>0,]
-gdp <- gdp %>% select(-Country, - Scale, -Base.Year) %>% 
-  mutate_all(~ as.numeric(.x))
-gdp <- pivot_longer(gdp, 
-                        cols = 1:6,  # Columns to pivot
-                        names_to = "year",  # Name of the new variable column
-                        values_to = "GDP"    # Name of the new value column
-)
-
-ir <- read.xlsx(xlsxFile=file.path(my_path, 'Interest_Rates.xlsx'), startRow=7)
-ir$country_code <- 0
-ir$country_code[ir$Country=='China, P.R.: Mainland'] <- 4
-ir$country_code[ir$Country=='China, P.R.: Hong Kong'] <- 9
-ir$country_code[ir$Country=='Estonia, Rep. of'] <- 1
-ir$country_code[ir$Country=='Germany'] <- 8
-ir$country_code[ir$Country=='Japan'] <- 10
-ir$country_code[ir$Country=='Vietnam'] <- 4
-ir <- ir[ir$country_code>0,]
-ir <- ir %>% select(-Country, - Scale, -Base.Year) %>% 
-  mutate_all(~ as.numeric(.x))
-ir <- pivot_longer(ir, 
-                    cols = 1:6,  # Columns to pivot
-                    names_to = "year",  # Name of the new variable column
-                    values_to = "GDP"    # Name of the new value column
-)
+# gdp <- read.xlsx(xlsxFile=file.path(my_path, 'GDP.xlsx'), startRow=7)
+# gdp$country_code <- 0
+# gdp$country_code[gdp$Country=='China, P.R.: Mainland'] <- 4
+# gdp$country_code[gdp$Country=='China, P.R.: Hong Kong'] <- 9
+# gdp$country_code[gdp$Country=='Estonia, Rep. of'] <- 1
+# gdp$country_code[gdp$Country=='Germany'] <- 8
+# gdp$country_code[gdp$Country=='Japan'] <- 10
+# gdp$country_code[gdp$Country=='Vietnam'] <- 4
+# gdp <- gdp[gdp$country_code>0,]
+# gdp <- gdp %>% select(-Country, - Scale, -Base.Year) %>% 
+#   mutate_all(~ as.numeric(.x))
+# gdp <- pivot_longer(gdp, 
+#                         cols = 1:6,  # Columns to pivot
+#                         names_to = "year",  # Name of the new variable column
+#                         values_to = "GDP"    # Name of the new value column
+# )
+# 
+# ir <- read.xlsx(xlsxFile=file.path(my_path, 'Interest_Rates.xlsx'), startRow=7)
+# ir$country_code <- 0
+# ir$country_code[ir$Country=='China, P.R.: Mainland'] <- 4
+# ir$country_code[ir$Country=='China, P.R.: Hong Kong'] <- 9
+# ir$country_code[ir$Country=='Estonia, Rep. of'] <- 1
+# ir$country_code[ir$Country=='Germany'] <- 8
+# ir$country_code[ir$Country=='Japan'] <- 10
+# ir$country_code[ir$Country=='Vietnam'] <- 4
+# ir <- ir[ir$country_code>0,]
+# ir <- ir %>% select(-Country, - Scale, -Base.Year) %>% 
+#   mutate_all(~ as.numeric(.x))
+# ir <- pivot_longer(ir, 
+#                     cols = 1:6,  # Columns to pivot
+#                     names_to = "year",  # Name of the new variable column
+#                     values_to = "GDP"    # Name of the new value column
+# )
 
 #######################################################################
 ## TEST 1: Link between highest diploma obtained and patience
 #######################################################################
 
+# params
+y <- 'datl_intra'
+
 # drop nan
+cor(data %>% select(atl_extra, atl_intra, atl_all), use='complete.obs')
 test1 <- data
 colSums(is.na(test1))
 test1 <- na.omit(test1[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
-                           'age', 'trust', 'female', 'atl', 'family_size')])
-xs <- colnames(test1 %>% select(-country_code, -atl))
+                           'age', 'trust', 'female', y, 'family_size')])
+xs <- colnames(test1 %>% select(-country_code, -y))
 
 #regression (panel regression)
-formulaff_1 <- as.formula(paste(
-  'atl ~ ', paste(xs, collapse = '+'), '|country_code| 0 |country_code',
-  ), sep='')
-regff_1 <- felm(formulaff_1, data=test1, exactDOF = T, cmethod='reghdfe')
-summary(regff_1)
-
-#regression multilevel
-# with random intercept for each group (=country_code)
-formulaml_1 <- as.formula(paste(
-  'atl ~ ', paste(xs, collapse = '+'), ' + (1 |country_code)', sep=''))
-regml_1 <- lmer(formulaml_1, data = test1)
-summary(regml_1)
+# formulaff_1 <- as.formula(paste(
+#   'atl ~ ', paste(xs, collapse = '+'), '|country_code| 0 |country_code',
+#   ), sep='')
+# regff_1 <- felm(formulaff_1, data=test1, exactDOF = T, cmethod='reghdfe')
+# summary(regff_1)
+# 
+# #regression multilevel
+# # with random intercept for each group (=country_code)
+# formulaml_1 <- as.formula(paste(
+#   'atl ~ ', paste(xs, collapse = '+'), ' + (1 |country_code)', sep=''))
+# regml_1 <- lmer(formulaml_1, data = test1)
+# summary(regml_1)
 
 #regression basic ols
 formula_1 <- as.formula(paste(
-  'atl ~ 1 +', paste(xs, collapse = '+'), sep=''))
+  y, ' ~ 1 +', paste(xs, collapse = '+'), sep=''))
 reg_1 <- lm(formula_1, data = test1)
 summary(reg_1)
 
@@ -211,12 +231,18 @@ cat(coef_str)
 ## TEST 2: Link between highest diploma obtained and patience per Country
 #######################################################################
 
+# params
+y <- 'datl_intra'
+
 # barplot
 test2_plot <- data %>% group_by(country_code) %>% 
   mutate(
     mean_is_patient = mean(is_patient, na.rm=T),
-    mean_atl = mean(atl, na.rm=T)) %>% ungroup() %>% 
-  select(country_code, mean_atl, mean_is_patient) %>% unique() %>% 
+    mean_atl = mean(get(y), na.rm=T),
+    mean_HasUniDegree = mean(uni_degree, na.rm=T)) %>% 
+  ungroup() %>% 
+  select(country_code, mean_atl, mean_is_patient, mean_HasUniDegree) %>% 
+  unique() %>% 
   arrange(country_code)
 barplot(cbind(mean_is_patient, mean_atl) ~ country_code, data=test2_plot, 
         beside=T, names.arg=c('Estonia', 'Taiwan', 'China', 'Vietnam', 
@@ -236,13 +262,13 @@ scatter.smooth(test2_plot$mean_atl, test2_plot$mean_is_patient, span = 1,
 test2 <- data
 colSums(is.na(test2))
 test2 <- na.omit(test2[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
-                           'age', 'trust', 'female', 'atl', 'family_size', 'Asia')])
-xs <- colnames(test2 %>% select(-country_code, -atl, -Asia))
+                           'age', 'trust', 'female', y, 'family_size', 'Asia')])
+xs <- colnames(test2 %>% select(-country_code, -y, -Asia))
 
 # run regression for each country
 countries <- seq(1,2) #sort(as.numeric(unique(test2$country_code)))
 formula_2 <- as.formula(paste(
-  'atl ~ 1 + ', paste(xs, collapse = '+'), sep=''))
+  y, ' ~ 1 + ', paste(xs, collapse = '+'), sep=''))
 results_2 <- list()
 n_obs <- c()
 
@@ -317,25 +343,22 @@ cat(paste(paste0('$', n_obs, '$'), collapse = ' & '))
 ## TEST 4: Is the link between education and patience driven by cultural differences?
 #######################################################################
 
-# get average hofstedte values per country
-# test4 <- data %>% group_by(cntry) %>% 
-#   mutate(across(all_of(hof), ~mean(.x, na.rm=T), .names='{.col}')) %>% 
-#   ungroup()
+# Params
+y <- 'datl_intra'
 
 # drop nan
 test4 <- data
 colSums(is.na(test4))
 test4 <- na.omit(test4[, c('is_patient', 'wealth', 'country_code', 'uni_degree', 
-                           'age', 'trust', 'female', 'atl', 'family_size', 
+                           'age', 'trust', 'female', y, 'family_size', 
                            'Asia', hof)])
 test4 <- test4 %>% mutate(
-  inter_patience_asia = is_patient * Asia) %>% 
-  select(-Asia)
-
-xs <- colnames(test4 %>% select(-country_code, -atl))
+  inter_patience_asia = is_patient * Asia,
+  inter_hasUniDegree_patience = is_patient * uni_degree)
+xs <- colnames(test4 %>% select(-country_code, -y))
 
 # regression
-formula_4 <- as.formula(paste('atl ~', paste(xs, collapse='+'), sep=''))
+formula_4 <- as.formula(paste(y, ' ~', paste(xs, collapse='+'), sep=''))
 reg_4 <- lm(formula_4, data=test4)
 summary(reg_4)
 
@@ -344,7 +367,8 @@ res <- summary(reg_4)$coefficients
 coef_str <- c()
 clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'HasUniDegree_{i}', 
                'Age_{i}', 'Trust_{i}', 'IsFemale_{i}', 'FamilySize_{i}', 
-               'IDV_{i}', 'PDI_{i}', 'MAS_{i}', 'UAI_{i}', 'IsPatient*Asia_{i}')
+               'Asia_{i}', 'IDV_{i}', 'PDI_{i}', 'MAS_{i}', 'UAI_{i}', 
+               'IsPatient*Asia_{i}', 'IsPatient*HasDegree_{i}')
 
 for(i in seq(1, length(clean_var))){
   coef_str[i] <- paste('\\multirow{2}{*}{$', clean_var[i], '$} & ', 
