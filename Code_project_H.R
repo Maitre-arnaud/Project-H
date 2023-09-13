@@ -92,7 +92,8 @@ atl_all <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2',
 atl_intra <- c('ALA1', 'ALA4', 'ALB1', 'ALB2', 'ALD1', 'ALD4')
 atl_extra <- c('ALC2', 'ALC3', 'ALC5', 'ALC6')
 # reverse them for highest score = good attitude toward learning
-atl_to_inv <- c('ALA2', 'ALA3', 'ALC5', 'ALC6')
+atl_to_inv <- c('ALA2', 'ALA3', 'ALB1', 'ALB2', 'ALC2', 'ALC3') # what I think
+#atl_to_inv <- c('ALA3', 'ALB1', 'ALB2', 'ALC5', 'ALC6', 'ALD1', 'ALD4') # what (-) corr with grades
 hof <- c('IDV', 'PDI', 'MAS', 'UAI')
 
 # some columns names are duplicated drop them -> mess with dplyr
@@ -104,6 +105,7 @@ data$ID <- 1:nrow(data)
 grades <- data %>% group_by(country_code) %>% mutate(
   new_grade = scale(as.numeric(grade) * case_when(eu_country==1 ~ -1, T ~ 1))
 ) %>% ungroup() %>% select(new_grade, ID)
+data2 <- data
 
 # Data preparation
 data <- data %>% left_join(grades, by=c('ID')) %>% 
@@ -117,6 +119,10 @@ data <- data %>% left_join(grades, by=c('ID')) %>%
          age = log(as.numeric(age)),
          trust = scale(XB2),
     new_unigrade = scale(unigrade),
+    berlin1 = case_when(berlin1==25~1, T~0),
+    berlin2 = case_when(berlin2==30~1, T~0),
+    berlin3 = case_when(berlin3==20~1, T~0),
+    berlin4 = case_when(berlin4==50~1, T~0),
          across(all_of(atl_to_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
          across(all_of(atl_all), ~ scale(.x), .names = '{.col}'),
          across(all_of(hof), ~ scale(.x), .names = '{.col}'),
@@ -126,7 +132,7 @@ data <- data %>% left_join(grades, by=c('ID')) %>%
   select(is_patient, family_size, country_code, wealth,
          all_of(atl_all), uni_degree, age, trust, female, education, crt,
          all_of(hof), eu_country, Asia, nationality, year, master, bachelor, 
-         new_unigrade, new_grade)
+         new_unigrade, new_grade, berlin1, berlin2, berlin3, berlin4)
 
 # create a score attitude toward learning
 data$n_var_atl_all <- apply(!is.na(data[, atl_all]), 1, sum) # n non-missing var
@@ -140,6 +146,9 @@ data$atl_extra <-  rowSums(data[,atl_extra], na.rm = T) / data$n_var_atl_extra
 # create ATL based on grades
 data$n_var_grades <- apply(!is.na(data[, c('new_grade', 'new_unigrade')]), 1, sum)
 data$atl_grade <-  rowSums(data[,c('new_grade', 'new_unigrade')], na.rm = T) / data$n_var_grades
+
+# create berlin score -> has not answered = dont know
+data$berlin <- scale(rowSums(data[,c('berlin1', 'berlin2', 'berlin3', 'berlin4')], na.rm = T))
 
 # create de-meaned atl variables
 atls <- c('atl_all', 'atl_intra', 'atl_extra')
@@ -155,52 +164,34 @@ data <- data %>% group_by(country_code) %>%
 data$n_var_pat2 <- apply(!is.na(data[, c('is_patient', 'crt')]), 1, sum)
 data$is_patient2 <- rowSums(data[,c('is_patient', 'crt')], na.rm = T) / data$n_var_pat2
 
-# process IMF data
-# gdp <- read.xlsx(xlsxFile=file.path(my_path, 'GDP.xlsx'), startRow=7)
-# gdp$country_code <- 0
-# gdp$country_code[gdp$Country=='China, P.R.: Mainland'] <- 4
-# gdp$country_code[gdp$Country=='China, P.R.: Hong Kong'] <- 9
-# gdp$country_code[gdp$Country=='Estonia, Rep. of'] <- 1
-# gdp$country_code[gdp$Country=='Germany'] <- 8
-# gdp$country_code[gdp$Country=='Japan'] <- 10
-# gdp$country_code[gdp$Country=='Vietnam'] <- 4
-# gdp <- gdp[gdp$country_code>0,]
-# gdp <- gdp %>% select(-Country, - Scale, -Base.Year) %>% 
-#   mutate_all(~ as.numeric(.x))
-# gdp <- pivot_longer(gdp, 
-#                         cols = 1:6,  # Columns to pivot
-#                         names_to = "year",  # Name of the new variable column
-#                         values_to = "GDP"    # Name of the new value column
-# )
-# 
-# ir <- read.xlsx(xlsxFile=file.path(my_path, 'Interest_Rates.xlsx'), startRow=7)
-# ir$country_code <- 0
-# ir$country_code[ir$Country=='China, P.R.: Mainland'] <- 4
-# ir$country_code[ir$Country=='China, P.R.: Hong Kong'] <- 9
-# ir$country_code[ir$Country=='Estonia, Rep. of'] <- 1
-# ir$country_code[ir$Country=='Germany'] <- 8
-# ir$country_code[ir$Country=='Japan'] <- 10
-# ir$country_code[ir$Country=='Vietnam'] <- 4
-# ir <- ir[ir$country_code>0,]
-# ir <- ir %>% select(-Country, - Scale, -Base.Year) %>% 
-#   mutate_all(~ as.numeric(.x))
-# ir <- pivot_longer(ir, 
-#                     cols = 1:6,  # Columns to pivot
-#                     names_to = "year",  # Name of the new variable column
-#                     values_to = "GDP"    # Name of the new value column
-# )
+# weight atl col based on how much they correlate with grades
+new_data <- c()
+#countries <- unique(data$country_code)
+#for(ci in countries){
+  sub <- data %>% select(-atl_all)# %>% filter(country_code==ci)
+  m <- cor(sub %>% select(atl_grade, all_of(atl_all)), 
+           use = 'pairwise.complete.obs')
+  v <- m[1,-1]
+  
+  for(var_i in atl_all){
+    sub[[var_i]] <- sub[[var_i]] * v[match(var_i, atl_all)]
+  }
+  sub$atl_weight = rowSums(sub[,atl_all], na.rm = T)
+  new_data <- bind_rows(new_data, sub)
+#}
 
 #######################################################################
 ## TEST 1: Link between highest diploma obtained and patience
 #######################################################################
 
 # params
-y <- 'atl_all'
+y <- 'berlin'
 x <- 'is_patient'
+df <- data
 
 # drop nan
-cor(data %>% select(atl_extra, atl_intra, atl_all), use='complete.obs')
-test1 <- data
+cor(df %>% select(atl_extra, atl_intra, atl_all, atl_grade, berlin), use='complete.obs')
+test1 <- df
 colSums(is.na(test1))
 test1 <- na.omit(test1[, c(x, 'wealth', 'country_code', 'education', 
                            'age', 'trust', 'female', y, 'family_size')])
@@ -249,7 +240,7 @@ cat(coef_str)
 #######################################################################
 
 # params
-y <- 'atl_all'
+y <- 'berlin'
 x <- 'is_patient'
 
 # barplot country
@@ -390,7 +381,7 @@ data %>% group_by(Asia) %>% summarise(wealth = mean(wealth, na.rm=T),
                                       all = mean(atl_all, na.rm=T))
 
 # Params
-y <- 'atl_grade'
+y <- 'berlin'
 x <- 'is_patient'
 
 # create interaction
