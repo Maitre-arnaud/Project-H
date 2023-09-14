@@ -12,8 +12,9 @@ library(readr)
 library(lme4)
 library(openxlsx)
 library(tidyr) # pivot wider
+library(psych)
 
-user <- 'Arnaud'
+user <- 'USB'
 if(user=='Arnaud'){
   my_path <- r'(C:\Users\Arnaud\OneDrive\Bureau\cultural finance\Projet\Data)'
 } else if(user=='USB'){
@@ -92,9 +93,10 @@ atl_all <- c('ALA1', 'ALA2', 'ALA3', 'ALA4', 'ALB1', 'ALB2', 'ALC2',
 atl_intra <- c('ALA1', 'ALA4', 'ALB1', 'ALB2', 'ALD1', 'ALD4')
 atl_extra <- c('ALC2', 'ALC3', 'ALC5', 'ALC6')
 # reverse them for highest score = good attitude toward learning
-atl_to_inv <- c('ALA2', 'ALA3', 'ALB1', 'ALB2', 'ALC2', 'ALC3') # what I think
-#atl_to_inv <- c('ALA3', 'ALB1', 'ALB2', 'ALC5', 'ALC6', 'ALD1', 'ALD4') # what (-) corr with grades
+atl_to_inv <- c('ALA2', 'ALA3', 'ALB1', 'ALB2', 'ALC2', 'ALC3', 'ALC5') # what I think -> ALC5 is asked by alpha
 hof <- c('IDV', 'PDI', 'MAS', 'UAI')
+atl_any <- c(atl_all, 'AC1', 'AC3', 'AC8', 'AC9', 'AC10', 'AC11', 'AC14', 'AIN0', 'AIN1')
+all_inv <- c(atl_to_inv, 'AIN0', 'AIN1')
 
 # some columns names are duplicated drop them -> mess with dplyr
 dupl_cols <- colnames(data)[which(duplicated(names(data)))]
@@ -123,14 +125,14 @@ data <- data %>% left_join(grades, by=c('ID')) %>%
     berlin2 = case_when(berlin2==30~1, T~0),
     berlin3 = case_when(berlin3==20~1, T~0),
     berlin4 = case_when(berlin4==50~1, T~0),
-         across(all_of(atl_to_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
-         across(all_of(atl_all), ~ scale(.x), .names = '{.col}'),
+         across(all_of(all_inv), ~ as.numeric(.x)*-1, .names = '{.col}'),
+         across(all_of(atl_any), ~ scale(.x), .names = '{.col}'),
          across(all_of(hof), ~ scale(.x), .names = '{.col}'),
     education = scale(case_when(hdegree=='PhD' ~ 5, hdegree=='Master' ~ 4, 
                           hdegree=='Bachelor' ~ 3, hdegree=='Others' ~ 2, # most of others are currently at uni
                           hdegree=='High school' ~ 1, T ~ 0))) %>% 
   select(is_patient, family_size, country_code, wealth,
-         all_of(atl_all), uni_degree, age, trust, female, education, crt,
+         all_of(atl_any), uni_degree, age, trust, female, education, crt,
          all_of(hof), eu_country, Asia, nationality, year, master, bachelor, 
          new_unigrade, new_grade, berlin1, berlin2, berlin3, berlin4)
 
@@ -179,6 +181,42 @@ new_data <- c()
   sub$atl_weight = rowSums(sub[,atl_all], na.rm = T)
   new_data <- bind_rows(new_data, sub)
 #}
+
+
+# Some Checks -------------------------------------------------------------
+#you may use Cronbach's Alpha with questions that are not on a common scale, 
+#as long as they are conceptually related and intended to measure the same 
+#construct. In such cases, you may need to make adjustments to ensure that the 
+#responses are comparable. Here are some considerations: (Standardization)
+# Alpha > 0.7 is good (consistency is good)
+
+sub <- data[, atl_all]
+
+# beware each participant only had question from ALB and ALD questions
+atl_a <- c("ALA1", "ALA2", "ALA3", "ALA4", "ALB1", "ALC2", "ALC3", "ALC5", "ALC6", "ALD1")
+sub <- na.omit(sub[,atl_a])
+kron_alpha_a <- alpha(sub, check.keys = F) # do not inverse scale of (-) cor variables
+
+# alpha is low (0.36) -> check corr matrix whether some should be dropped
+cor(sub)
+
+# dropping ALA3, ALB1, ALC5, ALC6 -> negative corr with ALA1
+atl_b <- c("ALA1", "ALA2", "ALA4", "ALC2", "ALC3", "ALD1")
+sub <- na.omit(data[,atl_b])
+kron_alpha_b <- alpha(sub, check.keys = F) # 0.31
+cor(sub)
+
+# dropping ALA2 -> negative corr with ALA1 as there are more obs
+atl_c <- c("ALA1", "ALA4", "ALC2", "ALC3", "ALD1")
+sub <- na.omit(data[,atl_c])
+kron_alpha_c <- alpha(sub, check.keys = F) # 0.31
+cor(sub)
+
+# keeping best correlated pair
+atl_d <- c("ALA1", "ALD1")
+sub <- na.omit(data[,atl_d])
+kron_alpha_d <- alpha(sub, check.keys = F) # 0.14
+cor(sub)
 
 #######################################################################
 ## TEST 1: Link between highest diploma obtained and patience

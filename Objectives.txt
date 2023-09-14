@@ -11,3 +11,6 @@ H: Learning attitudes and patience – cultural differences
 		-> regression of patience on ATL using interactions terms with each country
 
 
+
+
+
