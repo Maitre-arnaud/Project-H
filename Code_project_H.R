@@ -233,7 +233,86 @@ for(i in seq(1, length(atl_any))){
 cat(coef_str)
 
 
+# Some questions do not clearly belong to one factor: ALA3, ALA4, ALB, ALD
+# drop them
+# some question belong to multiple factors, but they have clear focal points
+atl_any_2 <- atl_any[!atl_any %in% c('ALA3', 'ALA4', 'ALB', 'ALD')]
+sub2 <- data[, atl_any_2]
+
+# finding number of factors using Kaiser's criterion
+fa_test2 <- fa(sub2, nfactors = 10, rotate = "varimax")
+eigenvalues2 <- fa_test2$values[1:10]
+nf2 <- sum(eigenvalues2 > 1) # ev greate than 1
+
+# Perform Factor analysis
+fa_res2 <- fa(sub2, nfactors = nf2, rotate = "varimax")
+print(fa_res2)
+
+# Some questions do not clearly belong to one factor: ALA2, ALC6 -> drop
+atl_any_3 <- atl_any_2[!atl_any_2 %in% c('ALA2', 'ALC6')]
+sub3 <- data[, atl_any_3]
+fa_test3 <- fa(sub3, nfactors = 5, rotate = "varimax")
+eigenvalues3 <- fa_test3$values[1:5]
+nf3 <- sum(eigenvalues3 > 1) # ev greate than 1
+fa_res3 <- fa(sub3, nfactors = 4, rotate = "varimax")
+print(fa_res3)
+
+# alternative path using nf3
+# drop ALA1, ACTS1, ACTS3
+# atl_any_4 <- atl_any_3[!atl_any_3 %in% c('ALA1', 'ACTS1', 'ACTS3')]
+# sub4 <- data[, atl_any_4]
+# fa_test4 <- fa(sub4, nfactors = 5, rotate = "varimax")
+# eigenvalues4 <- fa_test4$values[1:5]
+# nf4 <- sum(eigenvalues4 > 1)
+# fa_res4 <- fa(sub4, nfactors = nf4, rotate = "varimax")
+# print(fa_res4)
+# # we are heading toward a innovation / technology solution with this path....
+
+# Perform Factor analysis
+fa_res3 <- fa(sub3, nfactors = 4, rotate = "varimax")
+print(fa_res3)
+
+# Some questions do not clearly belong to one factor: AC3 -> has same loading for factor
+atl_any_4 <- atl_any_3[!atl_any_3 %in% c('AC3')]
+sub4 <- data[, atl_any_4]
+fa_res4 <- fa(sub4, nfactors = 4, rotate = "varimax")
+print(fa_res4)
+
+# -> all questions have a clear focal point
+# check that each factor is consistent -> pick abs(loading) >= 0.3
+mr1_var4 <- c('AC1', 'AC8', 'AC9', 'AC10', 'AC11', 'AC14') # innovation/achieve smth
+mr2_var4 <- c('AIT1', 'AIT2', 'AIN0', 'AIN1') # technology
+mr3_var4 <- c('ALC3', 'ALC2', 'ALC5') # diligent students perception
+mr4_var4 <- c('ALA1', 'ACTS1', 'ACTS3') # Curiosity
+kron_alpha_mr14 <- alpha(na.omit(sub4[, mr1_var4]), check.keys = T) # 0.75
+kron_alpha_mr24 <- alpha(na.omit(sub4[, mr2_var4]), check.keys = T) # 0.64
+kron_alpha_mr34 <- alpha(na.omit(sub4[, mr3_var4]), check.keys = T) # 0.55
+kron_alpha_mr44 <- alpha(na.omit(sub4[, mr4_var4]), check.keys = T) # 0.45 -> loading seems ok from theoretical PoV
+
+# report nicely factor analysis
+m <- fa_res4$loadings
+coef_str <- c()
+
+for(i in seq(1, length(atl_any_4))){
+  ci <- paste('$', atl_any_4[i], '$ ', sep='')
+  for(fi in seq(1, nf)){
+    ci <- paste(ci, ' & $', format(round(m[i,fi], d)), '$', sep='')
+  }
+  coef_str[i] <- paste(ci, '\\\\[3pt]\n', sep='')
+}
+cat(coef_str)
+
+# compute a score to see how each participant loads on the respective factors
+scores4 <- factor.scores(f=fa_res4, x = sub4)
+s <- scores4$scores
+colnames(s) <- c('MR1_4', 'MR2_4', 'MR3_4', 'MR4_4')
+data <- cbind(data, s)
+
+# Going to far in the iterative process make the factor too distinct although atl_all
+# is compoed of many traits (motivation. curiosity, ...)
+
 # Factor analysis (2) ---------------------------------------------------------
+# using Pure ATL variables
 colSums(is.na(data[,atl_all]))
 sub <- data[, atl_all]
 
@@ -241,11 +320,21 @@ sub <- data[, atl_all]
 fa_test <- fa(sub, nfactors = 10, rotate = "varimax")
 eigenvalues <- fa_test$values[1:10]
 nf <- sum(eigenvalues > 1) # ev greate than 1
-# -> only 1 factor
+# -> only 1 factor....
+fa_res <- fa(sub, nfactors = nf, rotate = "varimax")
 
 kron_alpha <- alpha(na.omit(sub[, atl_all]), check.keys = T) # 0.36
 
+# ALD should be dropped to increase alpha
+sub2 <- data[, atl_all[!atl_all %in% c('ALD')]]
+fa_test2 <- fa(sub2, nfactors = 5, rotate = "varimax")
+eigenvalues2 <- fa_test2$values[1:10]
+nf2 <- sum(eigenvalues2 > 1) # not even one factor...
+kron_alpha <- alpha(na.omit(sub2), check.keys = T) # 0.43
+# but there are no clear gains from removing one question anymore
+
 # Factor analysis (3) ---------------------------------------------------------
+# Test many variables, but the motivation for some is unclear
 atl_any <- c(atl_all, paste0('AC', seq(1,18)), 'AIN0', 'AIN1', 'ACTS1', 'ACTS3')
 colSums(is.na(data[,atl_any])) # [!atl_any %in% c('ALC5', 'ALC6')]
 sub <- data[, atl_any]
@@ -283,7 +372,7 @@ kron_alpha_mr4 <- alpha(na.omit(sub[, mr4_var]), check.keys = T) # 0.51
 #######################################################################
 
 # params
-y <- 'MR4'
+y <- 'MR4_4' # 'MR4_4' / 'MR4' <- Only MR4 is working
 x <- 'is_patient'
 df <- data
 
