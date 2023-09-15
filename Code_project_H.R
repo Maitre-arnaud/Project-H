@@ -210,14 +210,14 @@ scores <- factor.scores(f=fa_res, x = sub)
 data <- cbind(data, scores$scores)
 
 # check that each factor is consistent -> pick abs(loading) >= 0.3
-mr1_var <- c('AC10', 'AC9', 'AC1', 'AC3', 'AC8') # AT innovation
-mr3_var <- c('AIT1', 'AIT2', 'AIN0', 'AIN1', 'AC10') # AT technology
-mr2_var <- c('ALC3', 'ALC2', 'ALC5', 'AC8', 'ALA2') # AT diligent students
-mr4_var <- c('AC3', 'AC1', 'ALA1', 'ACTS1', 'ACTS3') # AT personal development
-kron_alpha_mr1 <- alpha(na.omit(sub[, mr1_var]), check.keys = T) # 0.75
-kron_alpha_mr2 <- alpha(na.omit(sub[, mr2_var]), check.keys = T) # 0.49
-kron_alpha_mr3 <- alpha(na.omit(sub[, mr3_var]), check.keys = T) # 0.68
-kron_alpha_mr4 <- alpha(na.omit(sub[, mr4_var]), check.keys = T) # 0.53 -> loading seems ok from theoretical PoV
+mr1_var <- c('AC10', 'AC9', 'AC1', 'AC3', 'AC8', 'AC11', 'AC14') # AT innovation
+mr3_var <- c('AIT1', 'AIT2', 'AIN0', 'AIN1') # AT technology
+mr2_var <- c('ALC3', 'ALC2', 'ALC5') # AT diligent students
+mr4_var <- c('AC3', 'AC1', 'ALA1', 'ACTS1', 'ALC6') # AT personal development
+kron_alpha_mr1 <- alpha(na.omit(sub[, mr1_var]), check.keys = T) # 0.77
+kron_alpha_mr2 <- alpha(na.omit(sub[, mr2_var]), check.keys = T) # 0.55
+kron_alpha_mr3 <- alpha(na.omit(sub[, mr3_var]), check.keys = T) # 0.64
+kron_alpha_mr4 <- alpha(na.omit(sub[, mr4_var]), check.keys = T) # 0.41 -> loading seems ok from theoretical PoV
 
 # report nicely factor analysis
 m <- fa_res$loadings
