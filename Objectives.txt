@@ -4,11 +4,10 @@ H: Learning attitudes and patience – cultural differences
 		-> Positive link
 
 	• Does this relation hold in every country?
-		-> regression of patience on ATL for each country
-		-> No links
+		-> regression of ATL on patience for each country
 
 	• Is it stronger in some countries? And could that difference be caused by cultural differences?
-		-> regression of patience on ATL using interactions terms with each country
+		-> interpret controls of Point 2?
 
 
 

@@ -372,7 +372,7 @@ kron_alpha_mr4 <- alpha(na.omit(sub[, mr4_var]), check.keys = T) # 0.51
 #######################################################################
 
 # params
-y <- 'MR4_4' # 'MR4_4' / 'MR4' <- Only MR4 is working
+y <- 'MR4' # 'MR4_4' / 'MR4' <- Only MR4 is working
 x <- 'is_patient'
 df <- data
 
@@ -386,8 +386,8 @@ cor(df %>% select(atl_all, atl_grade, berlin, MR1, MR2, MR3, MR4, is_patient, cr
 test1 <- df
 colSums(is.na(test1))
 test1 <- na.omit(test1[, c(x, 'wealth', 'country_code', 'master', 'bachelor', 
-                           'age', 'trust', 'female', y, 'family_size')])
-xs <- colnames(test1 %>% select(-country_code, -y))
+                           'age', 'trust', 'female', y, 'family_size', 'Asia')])
+xs <- colnames(test1 %>% select(-country_code, -y, -Asia))
 
 #regression (panel regression)
 # formulaff_1 <- as.formula(paste(
@@ -395,18 +395,11 @@ xs <- colnames(test1 %>% select(-country_code, -y))
 #   ), sep='')
 # regff_1 <- felm(formulaff_1, data=test1, exactDOF = T, cmethod='reghdfe')
 # summary(regff_1)
-# 
-# #regression multilevel
-# # with random intercept for each group (=country_code)
-# formulaml_1 <- as.formula(paste(
-#   'atl ~ ', paste(xs, collapse = '+'), ' + (1 |country_code)', sep=''))
-# regml_1 <- lmer(formulaml_1, data = test1)
-# summary(regml_1)
 
 #regression basic ols
-formula_1 <- as.formula(paste(
-  y, ' ~ 1 +', paste(xs, collapse = '+'), sep=''))
-reg_1 <- lm(formula_1, data = test1)
+formula_1 <- as.formula(paste(y, ' ~  +', paste(xs, collapse = '+'), sep=''))
+formulaff_1 <- as.formula(paste(y, ' ~ ', paste(xs, collapse = '+'), '|0| 0 |Asia', sep=''))
+reg_1 <- felm(formulaff_1, data = test1, exactDOF = T, cmethod='reghdfe')
 summary(reg_1)
 
 # results -> nice table
@@ -437,10 +430,6 @@ cat(coef_str)
 y <- 'MR4' # atl_all / MR4
 x <- 'is_patient' # crt / is_patient
 undersampling <- F
-
-if(y=='MR4'){
-  df[[y]] <- scale(df[[y]])
-}
 
 # barplot country
 test2_plot <- data %>% group_by(country_code) %>% 
@@ -494,6 +483,10 @@ test2 <- na.omit(test2[, c(x, 'wealth', 'country_code', 'master', 'bachelor',
                            all_of(hof))])
 xs <- colnames(test2 %>% select(-country_code, -y, -Asia))
 
+if(y=='MR4'){
+  test2[[y]] <- scale(test2[[y]])
+}
+
 # run regression for each country
 models <- seq(1,4) #sort(as.numeric(unique(test2$country_code)))
 formula_2 <- as.formula(paste(
@@ -504,20 +497,21 @@ n_obs <- c()
 for(i in seq(1, length(models))){
   if(i%%2==1){
     sub <- test2[test2$Asia==0,]
-    if(undersampling==T){
-      x0 <- sub[sub[[x]]==0,]
-      x1 <- sub[sub[[x]]==1,]
-      set.seed(14684)
-      random_indices <- sample(1:dim(x1)[1], dim(x0)[1]*3)
-      x1 <- x1[random_indices, ]
-      sub <- rbind(x0, x1)
-    }
   }else{
     sub <- test2[test2$Asia==1,]
   }
   
+  if(undersampling==T){
+    x0 <- sub[sub[[x]]==0,]
+    x1 <- sub[sub[[x]]==1,]
+    set.seed(14684)
+    random_indices <- sample(1:dim(x1)[1], dim(x0)[1]*3)
+    x1 <- x1[random_indices, ]
+    sub <- rbind(x0, x1)
+  }
+  
   if(i>2){
-    sub$w <- ifelse(sub[[x]] == 1, 1 / sum(sub[[x]] == 1), 1 / sum(sub[[x]] == 0))
+    sub$w <- ifelse(sub[[x]] == 1, 1 / sum(sub[[x]] == 1), 1 / sum(sub[[x]] == 0)) / 2
     reg_2 <- lm(formula_2, data=sub, weights = w)
   }else{
     reg_2 <- lm(formula_2, data=sub) 
@@ -540,7 +534,7 @@ for(i in seq(1, length(clean_var))){
     if(mi==3){csep<-' && '}else{csep<-' & '}
     
     reg <- results_2[[mi]]
-    ci <- paste(ci, csep, put_stars(reg[i,1], reg[i,2], m, d), sep='')
+    ci <- paste(ci, csep, put_stars(reg[i,1], reg[i,2], 1, d), sep='')
     si <- paste(si, csep, '$(' , format(round(reg[i,3],d), scientific=F), ')$', sep='')
   }
   coef_str[i] <- paste(ci, '\\\\ \n ', si, '\\\\[3pt]\n', sep='')
@@ -563,10 +557,11 @@ data %>% group_by(Asia) %>% summarise(wealth = mean(wealth, na.rm=T),
 # Params
 y <- 'MR4'
 x <- 'is_patient'
-use_wls <- F
+use_wls <- 'NO' # 'cond' | 'uncond' | 'NO'
 
 # create interaction
 test4 <- data %>% mutate(
+  inter_asia_patience = is_patient * Asia,
   inter_idv_patience = is_patient * IDV,
   inter_pdi_patience = is_patient * PDI,
   inter_mas_patience = is_patient * MAS,
@@ -576,35 +571,41 @@ test4 <- data %>% mutate(
 colSums(is.na(test4))
 test4 <- na.omit(test4[, c(x, 'wealth', 'country_code', 'master', 'bachelor',
                            'age', 'trust', 'female', y, 'family_size',
-                           'eu_country', hof, 'inter_idv_patience',
+                           hof, 'Asia', 'inter_asia_patience', 'inter_idv_patience',
                            'inter_pdi_patience', 'inter_mas_patience', 
                            'inter_uai_patience')])
 xs <- colnames(test4 %>% select(-country_code, -y))
 
+if(y=='MR4'){
+  test4[[y]] <- scale(test4[[y]])
+}
+
 # run 2 regressions
-regs <- seq(1,1)
+regs <- seq(1,2)
 results_4 <- list()
 n_obs <- c()
-test4$w[test4$eu_country==1] <- ifelse(test4[[x]][test4$eu_country==1] == 1, 1 / 
-                                         sum(test4[[x]][test4$eu_country==1] == 1), 
-                                       1 / sum(test4[[x]][test4$eu_country==1]==0))
-test4$w[test4$eu_country==0] <- ifelse(test4[[x]][test4$eu_country==0] == 1, 1 / 
-                                         sum(test4[[x]][test4$eu_country==0] == 1), 
-                                       1 / sum(test4[[x]][test4$eu_country==0]==0))
+if(use_wls=='cond'){
+  test4$w[test4$eu_country==1] <- ifelse(test4[[x]][test4$eu_country==1] == 1, 1 / 
+                                           sum(test4[[x]][test4$eu_country==1] == 1), 
+                                         1 / sum(test4[[x]][test4$eu_country==1]==0))
+  test4$w[test4$eu_country==0] <- ifelse(test4[[x]][test4$eu_country==0] == 1, 1 / 
+                                           sum(test4[[x]][test4$eu_country==0] == 1), 
+                                         1 / sum(test4[[x]][test4$eu_country==0]==0))
+} else if(use_wls=='uncond'){
+  test4$w <- ifelse(test4[[x]] == 1, 1 / sum(test4[[x]] == 1), 1 / sum(test4[[x]]==0))
+}
 
 for(i in regs){
-  # if(i==1){
-  #   new_xs <- xs[! xs %in% c('inter_patience_europe', 'inter_idv_patience')]
-  # }else if(i==2){
-  #   new_xs <- xs[! xs %in% c('inter_idv_patience')]
-  # }else{
-  #   new_xs <- xs
-  # }
-  new_xs <- xs
+  if(i==1){
+    new_xs <- xs[! xs %in% c('inter_idv_patience', 'inter_pdi_patience', 
+                             'inter_mas_patience', 'inter_uai_patience')]
+  }else{
+    new_xs <- xs
+  }
   formula_4 <- as.formula(paste(y, ' ~', paste(new_xs, collapse='+'), sep=''))
-  if(use_wls==T){
+  if(use_wls!='NO'){
     reg_4 <- lm(formula_4, data=test4, weights = w)
-  } else{
+  } else if(use_wls=='NO'){
     reg_4 <- lm(formula_4, data=test4) 
   }
   coef_4 <- summary(reg_4)$coefficients
@@ -616,32 +617,36 @@ for(i in regs){
 coef_str <- c()
 clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Master_{i}',
                'Bachelor_{i}', 'Age_{i}', 'Trust_{i}', 'IsFemale_{i}',
-               'FamilySize_{i}', 'Europe_{i}', 'IDV_{i}', 'PDI_{i}', 'MAS_{i}',
-               'UAI_{i}', 'IsPatient*IDV_{i}', 'IsPatient*PDI_{i}'
-               , 'IsPatient*MAS_{i}', 'IsPatient*UAI_{i}')
+               'FamilySize_{i}', 'IDV_{i}', 'PDI_{i}', 'MAS_{i}',
+               'UAI_{i}', 'Asia_{i}', 'IsPatient*Asia_{i}', 'IsPatient*IDV_{i}', 
+               'IsPatient*PDI_{i}', 'IsPatient*MAS_{i}', 'IsPatient*UAI_{i}')
 
 for(i in seq(1, length(clean_var))){
   ci <- paste('\\multirow{2}{*}{$', clean_var[i], '$}', sep='')
   si <- ''
   for(mi in seq(1, length(regs))){
-    # if(mi==1 & i>=length(clean_var)-1){
+    if(mi==1 & i>length(clean_var)-4){
+      ci <- paste(ci, ' & ', sep='')
+      si <- paste(si, ' & ', sep='')
+    } 
+    # else if(mi==2 & i==length(clean_var)){
     #   ci <- paste(ci, ' & ', sep='')
     #   si <- paste(si, ' & ', sep='')
-    # } else if(mi==2 & i==length(clean_var)){
-    #   ci <- paste(ci, ' & ', sep='')
-    #   si <- paste(si, ' & ', sep='')
-    # } else{
+    else{
       reg <- results_4[[mi]]
-      ci <- paste(ci, ' & ', put_stars(reg[i,1], reg[i,2], m, d), sep='')
+      ci <- paste(ci, ' & ', put_stars(reg[i,1], reg[i,2], 1, 2), sep='')
       si <- paste(si, ' & $(' , format(round(reg[i,3],d), scientific=F), ')$', sep='')
-    #}
+    }
   }
   coef_str[i] <- paste(ci, '\\\\ \n ', si, '\\\\[3pt]\n', sep='')
 }
 cat(coef_str)
 cat(paste(paste0('$', n_obs, '$'), collapse = ' & '))
 
-
+new_xs <- xs[! xs %in% c('inter_idv_patience', 'inter_pdi_patience', 
+                         'inter_mas_patience', 'inter_uai_patience')]
+cor(test4[, new_xs]) # inter_eu_patience is quite corr with eu_country (0.9) // pdi_patience and patience (0.88)
+sum(test4$is_patient, na.rm=T) / dim(test4)[1] # 76% are patient
 
 # Not used anymore --------------------------------------------------------
 
@@ -723,4 +728,9 @@ atl_f <- atl_any[!atl_any %in% c('ALB2', 'ALD1', 'ALD4')]
 sub <- na.omit(data[,atl_f])
 kron_alpha_f <- alpha(sub, check.keys = T) # 0.76
 
-
+# #regression multilevel
+# # with random intercept for each group (=country_code)
+# formulaml_1 <- as.formula(paste(
+#   'atl ~ ', paste(xs, collapse = '+'), ' + (1 |country_code)', sep=''))
+# regml_1 <- lmer(formulaml_1, data = test1)
+# summary(regml_1)
