@@ -13,6 +13,7 @@ library(lme4)
 library(openxlsx)
 library(tidyr) # pivot wider
 library(psych)
+library(fixest) # feols -> has no warning message compared to felm
 
 user <- 'Arnaud'
 if(user=='Arnaud'){
@@ -389,29 +390,22 @@ test1 <- na.omit(test1[, c(x, 'wealth', 'country_code', 'master', 'bachelor',
                            'age', 'trust', 'female', y, 'family_size', 'Asia')])
 xs <- colnames(test1 %>% select(-country_code, -y, -Asia))
 
-#regression (panel regression)
-# formulaff_1 <- as.formula(paste(
-#   'atl ~ ', paste(xs, collapse = '+'), '|country_code| 0 |country_code',
-#   ), sep='')
-# regff_1 <- felm(formulaff_1, data=test1, exactDOF = T, cmethod='reghdfe')
-# summary(regff_1)
-
 #regression basic ols
-formula_1 <- as.formula(paste(y, ' ~  +', paste(xs, collapse = '+'), sep=''))
-formulaff_1 <- as.formula(paste(y, ' ~ ', paste(xs, collapse = '+'), '|0| 0 |Asia', sep=''))
-reg_1 <- felm(formulaff_1, data = test1, exactDOF = T, cmethod='reghdfe')
+#formula_1 <- as.formula(paste(y, ' ~  +', paste(xs, collapse = '+'), sep=''))
+formulaff_1 <- as.formula(paste(y, ' ~ ', paste(xs, collapse = '+'), '|Asia|0|Asia', sep=''))
+reg_1 <- felm(formulaff_1, data = test1, exactDOF = T, cmethod='reghdfe') # reg_1 <- feols(as.formula(paste(y, ' ~ ', paste(xs, collapse = ' + '), sep='')), cluster = c('Asia'), data = test1) # -> gives same result wo warnings
 summary(reg_1)
 
 # results -> nice table
 res <- summary(reg_1)$coefficients
 coef_str <- c()
-clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Master_{i}',
+clean_var <- c('IsPatient_{i}', 'Wealth_{i}', 'Master_{i}',
                'Bachelor_{i}', 'Age_{i}', 'Trust_{i}', 'IsFemale_{i}', 
                'FamilySize_{i}')
 
 for(i in seq(1, length(clean_var))){
   coef_str[i] <- paste('\\multirow{2}{*}{$', clean_var[i], '$} & ', 
-                       put_stars(res[i,1], res[i,2], m, d), 
+                       put_stars(res[i,1], res[i,2], 1, d), 
                        '\\\\ \n & $(', format(round(res[i,3],d), scientific=F) ,
                        ')$\\\\[3pt]\n', sep='')
 }
@@ -514,7 +508,7 @@ for(i in seq(1, length(models))){
     sub$w <- ifelse(sub[[x]] == 1, 1 / sum(sub[[x]] == 1), 1 / sum(sub[[x]] == 0)) / 2
     reg_2 <- lm(formula_2, data=sub, weights = w)
   }else{
-    reg_2 <- lm(formula_2, data=sub) 
+    reg_2 <- lm(formula_2, data=sub)
   }
   coef_2 <- summary(reg_2)$coefficients
   results_2[[i]] <- coef_2
@@ -571,9 +565,7 @@ test4 <- data %>% mutate(
 colSums(is.na(test4))
 test4 <- na.omit(test4[, c(x, 'wealth', 'country_code', 'master', 'bachelor',
                            'age', 'trust', 'female', y, 'family_size',
-                           hof, 'Asia', 'inter_asia_patience', 'inter_idv_patience',
-                           'inter_pdi_patience', 'inter_mas_patience', 
-                           'inter_uai_patience')])
+                           hof, 'inter_asia_patience', 'Asia')])
 xs <- colnames(test4 %>% select(-country_code, -y))
 
 if(y=='MR4'){
@@ -597,16 +589,16 @@ if(use_wls=='cond'){
 
 for(i in regs){
   if(i==1){
-    new_xs <- xs[! xs %in% c('inter_idv_patience', 'inter_pdi_patience', 
-                             'inter_mas_patience', 'inter_uai_patience')]
+    new_xs <- xs[! xs %in% c('Asia')]
   }else{
     new_xs <- xs
   }
-  formula_4 <- as.formula(paste(y, ' ~', paste(new_xs, collapse='+'), sep=''))
+  formula_4 <- as.formula(paste(y, ' ~', paste(new_xs, collapse='+'), '|0|0|Asia', 
+                                sep=''))
   if(use_wls!='NO'){
-    reg_4 <- lm(formula_4, data=test4, weights = w)
+    reg_4 <- felm(formula_4, data=test4, weights = w)
   } else if(use_wls=='NO'){
-    reg_4 <- lm(formula_4, data=test4) 
+    reg_4 <- felm(formula_4, data=test4) 
   }
   coef_4 <- summary(reg_4)$coefficients
   results_4[[i]] <- coef_4
@@ -618,14 +610,13 @@ coef_str <- c()
 clean_var <- c('Intercept', 'IsPatient_{i}', 'Wealth_{i}', 'Master_{i}',
                'Bachelor_{i}', 'Age_{i}', 'Trust_{i}', 'IsFemale_{i}',
                'FamilySize_{i}', 'IDV_{i}', 'PDI_{i}', 'MAS_{i}',
-               'UAI_{i}', 'Asia_{i}', 'IsPatient*Asia_{i}', 'IsPatient*IDV_{i}', 
-               'IsPatient*PDI_{i}', 'IsPatient*MAS_{i}', 'IsPatient*UAI_{i}')
+               'UAI_{i}', 'IsPatient*Asia_{i}', 'Asia_{i}')
 
 for(i in seq(1, length(clean_var))){
   ci <- paste('\\multirow{2}{*}{$', clean_var[i], '$}', sep='')
   si <- ''
   for(mi in seq(1, length(regs))){
-    if(mi==1 & i>length(clean_var)-4){
+    if(mi==1 & i==length(clean_var)){
       ci <- paste(ci, ' & ', sep='')
       si <- paste(si, ' & ', sep='')
     } 
